@@ -1,0 +1,164 @@
+'use strict';
+/* Rota Fácil Web — integração com as mesmas RPCs do Android FUNCIONÁRIO.
+   Nunca armazenar service_role no navegador. */
+const cfg=window.ROTA_CONFIG;
+const $=id=>document.getElementById(id);
+const storeKey='rotafacil_web_iphone_v1';
+let state={device:'',proof:'',pendingId:'',session:'',operational:'',driver:'',company:''};
+let routes=[],statuses=new Map(),payments=new Map(),history=[],finance=[],lastPosition=null,loading=false,refreshTimer=null;
+try{state={...state,...JSON.parse(localStorage.getItem(storeKey)||'{}')}}catch{}
+const save=()=>localStorage.setItem(storeKey,JSON.stringify(state));
+function randomHex(){const a=crypto.getRandomValues(new Uint8Array(32));return [...a].map(x=>x.toString(16).padStart(2,'0')).join('')}
+if(!/^[a-f0-9]{64}$/.test(state.device)){state.device=randomHex();save()}
+const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n)||0);
+const date=s=>{if(!s)return '—';const d=new Date(s);return isNaN(d)?'—':d.toLocaleString('pt-BR')};
+const notice=(m)=>{const el=$('notice');el.textContent=m;el.classList.add('visible');clearTimeout(notice.t);notice.t=setTimeout(()=>el.classList.remove('visible'),5500)};
+function errorMessage(err){return err instanceof Error?err.message:String(err)}
+async function request(path,body,edge=false){
+ const url=`${cfg.supabaseUrl}/${edge?'functions/v1':'rest/v1/rpc'}/${path}`;
+ const r=await fetch(url,{method:'POST',headers:{'apikey':cfg.publishableKey,'Authorization':`Bearer ${cfg.publishableKey}`,'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'});
+ const txt=await r.text();let obj;try{obj=JSON.parse(txt)}catch{throw Error(`Resposta inválida (${r.status})`)}
+ if(!r.ok)throw Error(obj.erro||obj.error||obj.mensagem||obj.message||`HTTP ${r.status}`);
+ return obj;
+}
+const edge=(name,body)=>request(name,body,true);
+const rpc=(name,body)=>request(name,body);
+function setConnection(text){$('connection').textContent=text}
+function showApp(){ $('auth').classList.add('hidden');$('app').classList.remove('hidden');$('driverName').textContent=state.driverName||'Motoboy';startRefresh()}
+function showLogin(){ $('auth').classList.remove('hidden');$('app').classList.add('hidden');$('pendingBox').classList.toggle('hidden',!state.pendingId);if(state.pendingId)$('pendingText').textContent='Aguardando aprovação da loja. Após aprovar, toque em Consultar aprovação.'}
+async function login(ev){
+ ev.preventDefault();const user=$('username').value.trim().toLowerCase(),pass=$('password').value;
+ if(!/^[a-z0-9._-]{3,80}$/.test(user)||pass.length<8||pass.length>72){notice('Confira usuário e senha.');return}
+ $('loginBtn').disabled=true;
+ try{
+  const check=await edge('rota-login-motoboy',{acao:'verificar_login',usuario:user,senha:pass});
+  if(!check.valido)throw Error('Usuário ou senha inválidos');
+  state.proof=randomHex();
+  const r=await edge('rota-login-motoboy',{acao:'solicitar_acesso',usuario:user,senha:pass,dispositivo:state.device,comprovante:state.proof});
+  state.pendingId=r.solicitacao_id;save();showLogin();notice('Solicitação enviada. Peça à loja para aprovar o iPhone no painel.');
+ }catch(e){notice('Falha no acesso: '+errorMessage(e))}finally{$('loginBtn').disabled=false}
+}
+async function approve(){
+ $('approveBtn').disabled=true;
+ try{
+  if(!state.pendingId||!state.proof)throw Error('Solicite autorização primeiro');
+  const r=await edge('rota-login-motoboy',{acao:'ativar_acesso',solicitacao_id:state.pendingId,comprovante:state.proof});
+  if(r.status!=='ativo'){notice('Situação: '+(r.status||'aguardando'));return}
+  state.session=r.token_sessao;state.driver=r.motoboy_id;state.company=r.empresa_id;state.pendingId='';state.proof='';save();
+  await enableOperations();showApp();await refresh();
+ }catch(e){notice('Não foi possível concluir: '+errorMessage(e))}finally{$('approveBtn').disabled=false}
+}
+async function validateSession(){
+ if(!state.session)return false;
+ const r=await edge('rota-login-motoboy',{acao:'validar_sessao',token_sessao:state.session,dispositivo:state.device});
+ if(!r.ok)throw Error('Sessão não autorizada ou expirada');
+ state.driver=r.motoboy_id;state.company=r.empresa_id;state.driverName=r.nome||'Motoboy';save();return true;
+}
+async function enableOperations(){
+ if(!state.session)throw Error('Sessão não encontrada');
+ if(!/^[a-f0-9]{64}$/.test(state.operational)){state.operational=randomHex();save()}
+ const r=await edge('rota-habilitar-operacoes',{token_sessao:state.session,dispositivo:state.device,token_operacional:state.operational});
+ if(!r.ok)throw Error(r.erro||'Operações não autorizadas');
+ state.driver=r.motoboy_id;state.company=r.empresa_id;save();return r;
+}
+async function resume(){
+ if(!state.session){showLogin();return}
+ setConnection('Validando...');
+ try{await validateSession();if(!state.operational)await enableOperations();showApp();await refresh()}
+ catch(e){showLogin();setConnection('Acesso pendente');notice('Sessão: '+errorMessage(e))}
+}
+async function refresh(){
+ if(loading||!state.operational)return;
+ loading=true;setConnection('Sincronizando...');
+ try{
+  // Chamadas independentes: falha no financeiro não deve apagar rotas.
+  const jobs=[
+   rpc('rota_receber_despachos',{p_dispositivo:state.operational}),
+   rpc('rota_status_pedidos_motoboy',{p_dispositivo:state.operational}),
+   rpc('rota_pagamentos_motoboy',{p_dispositivo:state.operational}),
+   rpc('rota_historico_financeiro_motoboy',{p_dispositivo:state.operational}),
+   rpc('rota_financeiro_app_motoboy',{p_dispositivo:state.operational})
+  ];
+  const result=await Promise.allSettled(jobs);
+  let ok=0;
+  if(result[0].status==='fulfilled'){
+   const payload=result[0].value;
+   if(payload.ok===false)throw Error(payload.erro||'Despacho recusado');
+   const raw=Array.isArray(payload.rotas)?payload.rotas:[];
+   routes=raw.flatMap(r=>(Array.isArray(r.pedidos)?r.pedidos:[]).map(p=>({...p,rota_id:r.rota_id})));
+   ok++;
+  }
+  if(result[1].status==='fulfilled'){statuses=new Map((result[1].value.pedidos||[]).map(p=>[p.pedido_id,p]));ok++}
+  if(result[2].status==='fulfilled'){payments=new Map((result[2].value.pagamentos||[]).map(p=>[p.pedido_id,p]));ok++}
+  if(result[3].status==='fulfilled'){history=result[3].value.corridas||[];ok++}
+  if(result[4].status==='fulfilled'){const d=result[4].value;finance=Array.isArray(d.corridas)?d.corridas:Array.isArray(d.registros)?d.registros:[];ok++}
+  if(!ok)throw Error(result[0].reason?.message||'Não foi possível consultar o Supabase');
+  render();setConnection(ok===5?'Sincronizado':'Parcial');$('routeStatus').textContent=`Última consulta: ${new Date().toLocaleTimeString('pt-BR')} • ${ok}/5 fontes`;
+ }catch(e){setConnection('Sem conexão');$('routeStatus').textContent='Não foi possível atualizar. Os dados anteriores permanecem na tela.';notice(errorMessage(e))}
+ finally{loading=false}
+}
+function currentStatus(p){const s=statuses.get(p.pedido_id);return s?.status||p.status||'em_rota'}
+function currentResult(p){return statuses.get(p.pedido_id)?.resultado||''}
+function render(){
+ const active=routes.filter(p=>['em_rota','pendente'].includes(currentStatus(p)));
+ $('routeList').innerHTML=active.length?active.map((p,i)=>{
+ const pay=payments.get(p.pedido_id)||{},payment=pay.pagamento_status==='cobrar'?`Cobrar do cliente • ${esc(pay.pagamento_forma||'')} ${pay.pagamento_valor!=null?money(pay.pagamento_valor):''}`:pay.pagamento_status==='pago'?'Pagamento online realizado':'';
+ return `<article class="card"><div class="route-title"><h3>${i+1}. Pedido #${esc(p.numero||'—')}</h3><span class="badge">Em rota</span></div>
+ <p><strong>${esc(p.cliente||p.cliente_nome||'Cliente')}</strong><br>${esc(p.endereco||'Endereço não informado')}</p>
+ ${p.complemento?`<p>Complemento: ${esc(p.complemento)}</p>`:''}
+ ${p.referencia?`<p>Referência: ${esc(p.referencia)}</p>`:''}
+ ${payment?`<p class="muted">${payment}</p>`:''}
+ <p class="value">Corrida: ${money(p.taxa_motoboy??10)}</p>
+ <div class="actions"><button class="secondary" data-action="map" data-id="${esc(p.pedido_id)}">Navegar</button>
+ <button class="secondary" data-action="arrive" data-id="${esc(p.pedido_id)}">Cheguei</button>
+ <button data-action="deliver" data-id="${esc(p.pedido_id)}">Finalizar entrega</button>
+ <button class="secondary" data-action="cancel" data-id="${esc(p.pedido_id)}">Cancelar</button></div></article>`
+ }).join(''):'<div class="card muted">Nenhuma rota ativa atribuída pelo estabelecimento.</div>';
+ const records=history.length?history:finance;
+ $('historyList').innerHTML=records.length?records.slice(0,250).map(r=>{
+ const type=String(r.resultado||r.tipo||r.status||'');
+ return `<article class="card"><div class="route-title"><strong>#${esc(r.pedido_numero||r.numero||'—')} • ${esc(r.cliente||r.cliente_nome||'Pedido')}</strong><span class="badge ${type.includes('cancel')?'cancel':''}">${esc(type==='cancelado_pago'||type==='cancelada'?'Cancelada remunerada':type==='entregue'?'Entregue':type||'Registrado')}</span></div><p class="value">${money(r.valor??r.remuneracao??0)}</p><small>${esc(date(r.registrado_em||r.finalizado_em||r.data))}</small></article>`
+ }).join(''):'<div class="card muted">Nenhum registro retornado pelo Supabase.</div>';
+ const f=finance.length?finance:history;
+ const total=f.reduce((s,r)=>s+(Number(r.valor??r.remuneracao)||0),0);
+ $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Não é fechamento de ciclo. O valor mostrado depende do período e dos registros retornados pela RPC.</p></div>`;
+ $('financeList').innerHTML=f.slice(0,100).map(r=>`<article class="card"><strong>${esc(r.pedido_numero||r.numero||'Corrida')}</strong> • ${esc(r.tipo||r.resultado||'')} <span class="value">${money(r.valor??r.remuneracao??0)}</span></article>`).join('');
+}
+function findOrder(id){return routes.find(p=>p.pedido_id===id)}
+function distance(a,b,c,d){const R=6371000,toRad=x=>x*Math.PI/180,x1=toRad(c-a),x2=toRad(d-b);return 2*R*Math.asin(Math.sqrt(Math.sin(x1/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(x2/2)**2))}
+async function locate(){if(!navigator.geolocation)throw Error('GPS indisponível');return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>{lastPosition=p.coords;$('locText').textContent=`Precisão aproximada: ${Math.round(p.coords.accuracy)} m • ${new Date().toLocaleTimeString('pt-BR')}`;resolve(p.coords)},e=>reject(Error('GPS: '+e.message)),{enableHighAccuracy:true,timeout:18000,maximumAge:0}))}
+async function verifyDistance(p){
+ const lat=Number(p.latitude),lon=Number(p.longitude);
+ if(!p.latitude||!p.longitude||!Number.isFinite(lat)||!Number.isFinite(lon))throw Error('Pedido sem coordenadas. Peça ao estabelecimento para confirmar a entrega pelo painel.');
+ const loc=await locate(),meters=distance(loc.latitude,loc.longitude,lat,lon);
+ if(loc.accuracy>100)throw Error('Precisão do GPS insuficiente. Aguarde e tente novamente.');
+ if(meters>cfg.maxDeliveryDistanceMeters)throw Error(`Você está a ${Math.round(meters)} m do endereço. Limite: ${cfg.maxDeliveryDistanceMeters} m. Peça confirmação pelo painel se necessário.`);
+}
+async function action(id,kind){
+ const p=findOrder(id);if(!p)return;
+ if(kind==='map'){const q=p.latitude&&p.longitude?`${p.latitude},${p.longitude}`:p.endereco||'';window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q),'_blank','noopener');return}
+ if(kind==='arrive'){try{await locate();notice('Chegada registrada apenas nesta tela. A integração de chegada com o banco precisa ser confirmada.')}catch(e){notice(errorMessage(e))}return}
+ if(!['deliver','cancel'].includes(kind))return;
+ const msg=kind==='deliver'?'Confirmar que este pedido foi entregue?':'Cancelar este pedido sem remuneração? Cancelamento remunerado deve ser realizado pelo estabelecimento.';
+ if(!confirm(msg))return;
+ const btn=document.querySelector(`[data-id="${CSS.escape(id)}"][data-action="${kind}"]`);
+ if(btn)btn.disabled=true;
+ try{
+  if(kind==='deliver')await verifyDistance(p);
+  const r=await rpc('rota_registrar_resultado_motoboy',{p_dispositivo:state.operational,p_pedido_id:id,p_rota_id:p.rota_id,p_status:kind==='deliver'?'entregue':'cancelado',p_finalizado_em:new Date().toISOString()});
+  if(r.ok===false)throw Error(r.erro||'Servidor não confirmou a operação');
+  notice('Operação confirmada no Supabase');await refresh();
+ }catch(e){notice('Não finalizado: '+errorMessage(e))}
+ finally{if(btn)btn.disabled=false}
+}
+function startRefresh(){if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden)refresh()},Math.max(10,cfg.refreshSeconds)*1000)}
+$('loginForm').addEventListener('submit',login);
+$('approveBtn').addEventListener('click',approve);
+$('refreshBtn').addEventListener('click',refresh);
+$('locBtn').addEventListener('click',async()=>{try{await locate()}catch(e){notice(errorMessage(e))}});
+$('logoutBtn').addEventListener('click',()=>{if(!confirm('Sair deste iPhone? Será necessário solicitar autorização novamente.'))return;localStorage.removeItem(storeKey);location.reload()});
+document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.view').forEach(v=>v.classList.toggle('hidden',v.id!==b.dataset.tab))}));
+$('routeList').addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(b)action(b.dataset.id,b.dataset.action)});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.session)refresh()});
+resume();

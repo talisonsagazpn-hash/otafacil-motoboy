@@ -5,7 +5,7 @@ const cfg=window.ROTA_CONFIG;
 const $=id=>document.getElementById(id);
 const storeKey='rotafacil_web_iphone_v1';
 let state={device:'',proof:'',pendingId:'',session:'',operational:'',driver:'',company:''};
-let gpsWatch=null,gpsTimer=null,gpsLastSent=0,gpsSending=false,gpsLastFix=null,gpsOnline=false;let routes=[],statuses=new Map(),payments=new Map(),history=[],finance=[],lastPosition=null,loading=false,refreshTimer=null;
+let selectedPeriod='week';let gpsWatch=null,gpsTimer=null,gpsLastSent=0,gpsSending=false,gpsLastFix=null,gpsOnline=false;let routes=[],statuses=new Map(),payments=new Map(),history=[],finance=[],lastPosition=null,loading=false,refreshTimer=null;
 try{state={...state,...JSON.parse(localStorage.getItem(storeKey)||'{}')}}catch{}
 const save=()=>localStorage.setItem(storeKey,JSON.stringify(state));
 function randomHex(){const a=crypto.getRandomValues(new Uint8Array(32));return [...a].map(x=>x.toString(16).padStart(2,'0')).join('')}
@@ -119,21 +119,37 @@ function render(){
  <button class="secondary" data-action="cancel" data-id="${esc(p.pedido_id)}">Cancelar</button></div></article>`
  }).join(''):'<div class="card muted">Nenhuma rota ativa atribuída pelo estabelecimento.</div>';
  const records=history.length?history:finance;
+ const displayDate=r=>firstField(r,'finalizado_em','data_finalizacao','registrado_em','data','finalizadoEm','data_financeira');
+ const num=r=>firstField(r,'pedido_numero','numero','numero_pedido','numeroPedido','pedido','pedidoNumero','pedido_nro');
+ const client=r=>firstField(r,'cliente','cliente_nome','nome_cliente','nome','nomeCliente','clienteNome');
+ const value=r=>Number(firstField(r,'valor','remuneracao','valor_corrida','taxa_motoboy','valor_motoboy')||0);
+ const status=r=>String(firstField(r,'resultado','tipo','status','situacao')||'').toLowerCase();
  $('historyList').innerHTML=records.length?records.slice(0,250).map(r=>{
- const type=String(r.resultado||r.tipo||r.status||'');
- return `<article class="card"><div class="route-title"><strong>#${esc(firstField(r,'pedido_numero','numero','numero_pedido','pedido')||'não informado')} • ${esc(firstField(r,'cliente','cliente_nome','nome_cliente','nome')||'Cliente não informado pelo servidor')}</strong><span class="badge ${type.includes('cancel')?'cancel':''}">${esc(type==='cancelado_pago'||type==='cancelada'?'Cancelada remunerada':type==='entregue'?'Entregue':type||'Registrado')}</span></div><p class="value">${money(r.valor??r.remuneracao??0)}</p><small>${esc(date(firstField(r,'finalizado_em','data_finalizacao','registrado_em','data')))}</small></article>`
- }).join(''):'<div class="card muted">Nenhum registro retornado pelo Supabase.</div>';
+  const t=status(r),cancel=t.includes('cancel'),paid=t.includes('pago')||t.includes('remunerad');
+  const label=cancel?(paid?'Cancelada remunerada':'Cancelada'):t.includes('entreg')||t.includes('finaliz')?'Finalizada':t||'Registrada';
+  const number=num(r),name=client(r);
+  return `<article class="card history-entry ${cancel?'cancelled':''}"><div class="route-title"><strong>📦 Pedido ${number?'#'+esc(number):'sem número'}</strong><span class="badge ${cancel?'cancel':''}">${esc(label)}</span></div><div class="client-name">${esc(name||'Cliente não informado pelo servidor')}</div><div class="money-row"><span class="value">${money(value(r))}</span><small>${esc(date(displayDate(r)))}</small></div><div class="meta">${esc(firstField(r,'endereco','bairro','loja_nome')||'')}<br>Registro sincronizado • consulta somente leitura</div></article>`
+ }).join(''):'<div class="card muted">Nenhum registro retornado pelo Supabase para esta conta.</div>';
  const f=finance.length?finance:history;
- const total=f.reduce((s,r)=>s+(Number(r.valor??r.remuneracao)||0),0);
- $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Não é fechamento de ciclo. O valor mostrado depende do período e dos registros retornados pela RPC.</p></div>`;
- const weekStart=new Date();weekStart.setHours(0,0,0,0);weekStart.setDate(weekStart.getDate()-((weekStart.getDay()+6)%7));
+ const today=new Date();today.setHours(0,0,0,0);
+ const weekStart=new Date(today);weekStart.setDate(today.getDate()-((today.getDay()+6)%7));
+ const periodStart=selectedPeriod==='today'?today:selectedPeriod==='month'?new Date(today.getFullYear(),today.getMonth(),1):weekStart;
+ const periodEnd=selectedPeriod==='today'?new Date(+today+86400000):selectedPeriod==='month'?new Date(today.getFullYear(),today.getMonth()+1,1):new Date(+weekStart+7*86400000);
+ const validDate=r=>{const raw=displayDate(r);const d=raw?new Date(raw):null;return d&&!isNaN(d.getTime())?d:null};
+ const selected=f.filter(r=>{const d=validDate(r);return d&&d>=periodStart&&d<periodEnd});
+ const total=selected.reduce((v,r)=>v+value(r),0);
+ const delivered=selected.filter(r=>/entreg|finaliz/.test(status(r)));
+ const cancelled=selected.filter(r=>/cancel/.test(status(r)));
+ const others=selected.filter(r=>!/entreg|finaliz|cancel/.test(status(r)));
+ const sum=a=>a.reduce((v,r)=>v+value(r),0);
+ const unclassified=f.filter(r=>!validDate(r)).length;
+ $('financeSummary').innerHTML=`<div class="summary"><small>${selectedPeriod==='today'?'Total de hoje':selectedPeriod==='month'?'Total do mês':'Total da semana'} • ${selected.length} registro(s)</small><strong>${money(total)}</strong><p class="hint">Valores recebidos do Supabase, pela data de finalização. ${unclassified?unclassified+' registro(s) sem data não entram no período.':''} Não representa necessariamente o fechamento do ciclo.</p></div><div class="finance-heading">Resultados do período</div><div class="finance-cards"><div class="card"><small>📦 Entregas pagas (${delivered.length})</small><strong class="good">${money(sum(delivered))}</strong></div><div class="card"><small>✖ Canceladas (${cancelled.length})</small><strong class="bad">${money(sum(cancelled))}</strong></div><div class="card"><small>↪ Outros (${others.length})</small><strong class="blue">${money(sum(others))}</strong></div><div class="card"><small>📊 Média por registro</small><strong>${money(selected.length?total/selected.length:0)}</strong></div></div>`;
  const days=Array.from({length:7},(_,i)=>({label:['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'][i],amount:0}));
- let undated=0;
- f.forEach(r=>{const raw=r.finalizado_em||r.registrado_em||r.data_finalizacao||r.data;const dt=raw?new Date(raw):null;if(!dt||Number.isNaN(dt.getTime())){undated++;return}const day=new Date(dt);day.setHours(0,0,0,0);const index=Math.round((day-weekStart)/86400000);if(index>=0&&index<7)days[index].amount+=Number(r.valor??r.remuneracao)||0});
+ selected.forEach(r=>{const d=validDate(r);if(!d)return;const i=(d.getDay()+6)%7;days[i].amount+=value(r)});
  const max=Math.max(1,...days.map(x=>x.amount));
  $('financeChart').innerHTML=days.map(g=>`<div class="chart-col"><strong>${money(g.amount)}</strong><div class="chart-bar" style="height:${Math.max(4,Math.round(g.amount/max*125))}px"></div><small>${g.label}</small></div>`).join('');
- $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Gráfico: semana atual (segunda a domingo), pela data de finalização disponível. ${undated?undated+' registro(s) sem data não aparecem no gráfico.':''} Não representa necessariamente o fechamento do ciclo.</p></div>`;
- $('financeList').innerHTML=f.slice(0,100).map(r=>`<article class="card"><strong>${esc(firstField(r,'pedido_numero','numero','numero_pedido')||'Corrida')}</strong> • ${esc(r.tipo||r.resultado||'')} <span class="value">${money(r.valor??r.remuneracao??0)}</span></article>`).join('');
+ $('financeList').innerHTML='<p class="hint">O gráfico mostra os valores por dia da semana do período selecionado. Não inclui registros sem data de finalização.</p>';
+
 }
 function findOrder(id){return routes.find(p=>p.pedido_id===id)}
 function distance(a,b,c,d){const R=6371000,toRad=x=>x*Math.PI/180,x1=toRad(c-a),x2=toRad(d-b);return 2*R*Math.asin(Math.sqrt(Math.sin(x1/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(x2/2)**2))}
@@ -228,3 +244,6 @@ document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()
 $('routeList').addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(b)action(b.dataset.id,b.dataset.action)});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.session){refresh();if(gpsLastFix)sendGps(gpsLastFix)}else if(document.hidden)presence(false,'Em segundo plano: envio de GPS não garantido')});
 resume();
+
+// Seleção de período: somente visualização, nunca modifica registros no Supabase.
+document.querySelectorAll('.period').forEach(b=>b.addEventListener('click',()=>{selectedPeriod=b.dataset.period;document.querySelectorAll('.period').forEach(x=>x.classList.toggle('active',x===b));render()}));

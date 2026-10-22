@@ -1,0 +1,45 @@
+ROTA FÁCIL WEB — iPHONE | PRIMEIRA VERSÃO DE HOMOLOGAÇÃO
+
+Base: RotaFacil_FUNCIONARIO_ATUALIZADOR_SESSAO_2_9_6_44_FONTE.zip.
+Esta entrega NÃO é uma conversão binária do APK. É um cliente web que usa
+as Edge Functions e RPCs já chamadas pelo aplicativo Android FUNCIONÁRIO.
+
+PUBLICAÇÃO
+1. Publique o CONTEÚDO da pasta rotafacil-web-iphone em um repositório
+   GitHub Pages SEPARADO do painel administrativo, com HTTPS.
+2. Abra a URL publicada no Safari do iPhone.
+3. Faça login com usuário e senha do motoboy.
+4. A loja aprova a solicitação no painel MASTER.
+5. Clique em Consultar aprovação e confira recebimento de rotas.
+6. Safari > Compartilhar > Adicionar à Tela de Início.
+
+REQUISITOS DO SUPABASE
+- Edge Functions: rota-login-motoboy, rota-habilitar-operacoes
+- RPCs: rota_receber_despachos, rota_status_pedidos_motoboy,
+  rota_pagamentos_motoboy, rota_historico_financeiro_motoboy,
+  rota_financeiro_app_motoboy, rota_registrar_resultado_motoboy
+- Permissões e regras do banco devem ser mantidas. Nunca publicar service_role.
+- Esta versão usa a chave publicável presente no Android FUNCIONÁRIO.
+
+LIMITAÇÕES E PONTOS QUE PRECISAM DE TESTE REAL
+- Não há GPS contínuo em segundo plano no Safari/iOS.
+- A função 'Cheguei' obtém GPS, mas NÃO envia confirmação de chegada ao banco:
+  a RPC de chegada ainda precisa ser identificada e integrada.
+- Finalização por distância de 300 m é verificada no navegador; o servidor
+  também deve validar a operação para impedir contornos de segurança.
+- O cancelamento remunerado permanece ação do estabelecimento no painel.
+- O financeiro usa registros retornados pela RPC; não substitui fechamento
+  contábil do painel. Conferir período, nomenclatura e valores.
+- A autenticação da sessão é real, mas a operação depende da Edge Function
+  rota-habilitar-operacoes aceitar origem do navegador e do token operacional.
+- A tela web não está homologada em iPhone real nem em produção.
+- Sem notificações push ou GPS background; rotas são consultadas com a página ativa.
+- Esta primeira versão NÃO tem paridade integral com todas as telas do Android.
+- Não distribuir a motoboys em produção antes de testes e revisão de segurança.
+
+SEGURANÇA
+- HTTPS obrigatório para GPS e armazenamento de credenciais.
+- Não salvar senhas de login.
+- Token da sessão fica no localStorage deste navegador; proteger o aparelho.
+- Para homologação, utilizar um motoboy de teste e rotas fictícias.
+- Não alterar dados financeiros nem históricos existentes.

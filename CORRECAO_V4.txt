@@ -1,0 +1,1 @@
+V4: removida consulta a RPC inexistente rota_status_pedidos_motoboy. Mantidas as quatro consultas existentes, sem alterações no Supabase. Presença GPS preservada. Substituir app.js e index.html na raiz do repositório. Testar despacho real e finalização antes de uso em produção.

@@ -89,13 +89,14 @@ async function refresh(){
    ok++;
   }
   if(result[1].status==='fulfilled'){payments=new Map((result[1].value.pagamentos||[]).map(p=>[p.pedido_id,p]));ok++}
-  if(result[2].status==='fulfilled'){history=result[2].value.corridas||[];ok++}
+  if(result[2].status==='fulfilled'){history=Array.isArray(result[2].value.corridas)?result[2].value.corridas:[];ok++}
   if(result[3].status==='fulfilled'){const d=result[3].value;finance=Array.isArray(d.corridas)?d.corridas:Array.isArray(d.registros)?d.registros:[];ok++}
   if(!ok)throw Error(result[0].reason?.message||'Não foi possível consultar o Supabase');
   render();setConnection(ok===4?'Sincronizado':'Parcial');$('routeStatus').textContent=`Última consulta: ${new Date().toLocaleTimeString('pt-BR')} • ${ok}/4 fontes`;if(ok<4){const names=['Despachos','Pagamentos','Histórico','Financeiro'];const errs=result.map((r,i)=>r.status==='rejected'?`${names[i]}: ${errorMessage(r.reason)}`:null).filter(Boolean);$('syncErrors').textContent=errs.join(' | ')}else $('syncErrors').textContent='';
  }catch(e){setConnection('Sem conexão');$('routeStatus').textContent='Não foi possível atualizar. Os dados anteriores permanecem na tela.';notice(errorMessage(e))}
  finally{loading=false}
 }
+function firstField(o,...keys){for(const k of keys){const v=o?.[k];if(v!==undefined&&v!==null&&String(v).trim()!=='')return v}return null}
 function currentStatus(p){const s=statuses.get(p.pedido_id);return s?.status||p.status||'em_rota'}
 function currentResult(p){return statuses.get(p.pedido_id)?.resultado||''}
 function render(){
@@ -120,7 +121,7 @@ function render(){
  const records=history.length?history:finance;
  $('historyList').innerHTML=records.length?records.slice(0,250).map(r=>{
  const type=String(r.resultado||r.tipo||r.status||'');
- return `<article class="card"><div class="route-title"><strong>#${esc(r.pedido_numero||r.numero||'—')} • ${esc(r.cliente||r.cliente_nome||'Pedido')}</strong><span class="badge ${type.includes('cancel')?'cancel':''}">${esc(type==='cancelado_pago'||type==='cancelada'?'Cancelada remunerada':type==='entregue'?'Entregue':type||'Registrado')}</span></div><p class="value">${money(r.valor??r.remuneracao??0)}</p><small>${esc(date(r.registrado_em||r.finalizado_em||r.data))}</small></article>`
+ return `<article class="card"><div class="route-title"><strong>#${esc(firstField(r,'pedido_numero','numero','numero_pedido','pedido')||'não informado')} • ${esc(firstField(r,'cliente','cliente_nome','nome_cliente','nome')||'Cliente não informado pelo servidor')}</strong><span class="badge ${type.includes('cancel')?'cancel':''}">${esc(type==='cancelado_pago'||type==='cancelada'?'Cancelada remunerada':type==='entregue'?'Entregue':type||'Registrado')}</span></div><p class="value">${money(r.valor??r.remuneracao??0)}</p><small>${esc(date(firstField(r,'finalizado_em','data_finalizacao','registrado_em','data')))}</small></article>`
  }).join(''):'<div class="card muted">Nenhum registro retornado pelo Supabase.</div>';
  const f=finance.length?finance:history;
  const total=f.reduce((s,r)=>s+(Number(r.valor??r.remuneracao)||0),0);
@@ -132,7 +133,7 @@ function render(){
  const max=Math.max(1,...days.map(x=>x.amount));
  $('financeChart').innerHTML=days.map(g=>`<div class="chart-col"><strong>${money(g.amount)}</strong><div class="chart-bar" style="height:${Math.max(4,Math.round(g.amount/max*125))}px"></div><small>${g.label}</small></div>`).join('');
  $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Gráfico: semana atual (segunda a domingo), pela data de finalização disponível. ${undated?undated+' registro(s) sem data não aparecem no gráfico.':''} Não representa necessariamente o fechamento do ciclo.</p></div>`;
- $('financeList').innerHTML=f.slice(0,100).map(r=>`<article class="card"><strong>${esc(r.pedido_numero||r.numero||'Corrida')}</strong> • ${esc(r.tipo||r.resultado||'')} <span class="value">${money(r.valor??r.remuneracao??0)}</span></article>`).join('');
+ $('financeList').innerHTML=f.slice(0,100).map(r=>`<article class="card"><strong>${esc(firstField(r,'pedido_numero','numero','numero_pedido')||'Corrida')}</strong> • ${esc(r.tipo||r.resultado||'')} <span class="value">${money(r.valor??r.remuneracao??0)}</span></article>`).join('');
 }
 function findOrder(id){return routes.find(p=>p.pedido_id===id)}
 function distance(a,b,c,d){const R=6371000,toRad=x=>x*Math.PI/180,x1=toRad(c-a),x2=toRad(d-b);return 2*R*Math.asin(Math.sqrt(Math.sin(x1/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(x2/2)**2))}
@@ -154,7 +155,21 @@ async function action(id,kind){
  const choice=window.prompt('Escolha o navegador: 1 - Google Maps | 2 - Waze','1');
  if(choice==='1'||choice==='2')window.open(choice==='1'?maps:waze,'_blank','noopener');return
  }
- if(kind==='arrive'){try{await locate();notice('Chegada registrada apenas nesta tela. A integração de chegada com o banco precisa ser confirmada.')}catch(e){notice(errorMessage(e))}return}
+ if(kind==='arrive'){
+  // Chegada no web não é uma RPC de finalização. Nunca marcar entregue sem confirmação do servidor.
+  const locator=firstField(p,'localizador','codigo_localizador','codigo_confirmacao','codigo_entrega');
+  const provider=String(firstField(p,'plataforma','origem','integracao','app_origem')||'').toLowerCase();
+  const candidate=firstField(p,'url_confirmacao','link_confirmacao','link_confirmar','url_confirmar','confirmacao_url');
+  let link='';
+  if(candidate){try{const u=new URL(String(candidate));if(u.protocol==='https:'&&['food-b-h5.99app.com','www.ifood.com.br','ifood.com.br'].includes(u.hostname))link=u.href}catch{}}
+  if(!link&&provider.includes('99'))link='https://food-b-h5.99app.com/pt-BR/v2/confirmation-entrega';
+  if(!locator){notice('Pedido sem localizador retornado pelo painel. Não é possível copiar automaticamente.');return}
+  if(!link){notice('Localizador encontrado, mas o pedido não trouxe link de confirmação confiável.');return}
+  // Clipboard exige HTTPS e gesto do usuário; abrir página depois de copiar.
+  try{await navigator.clipboard.writeText(String(locator));notice('Localizador '+locator+' copiado. Abrindo confirmação...')}
+  catch(e){notice('Não foi possível copiar automaticamente. Localizador: '+locator+' — copie manualmente antes de confirmar.')}
+  window.open(link,'_blank','noopener');return
+ }
  if(!['deliver','cancel'].includes(kind))return;
  const msg=kind==='deliver'?'Confirmar que este pedido foi entregue?':'Cancelar este pedido sem remuneração? Cancelamento remunerado deve ser realizado pelo estabelecimento.';
  if(!confirm(msg))return;
@@ -204,7 +219,7 @@ function stopGps(){
 function startRefresh(){if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden)refresh()},Math.max(10,cfg.refreshSeconds)*1000)}
 $('loginForm').addEventListener('submit',login);
 $('approveBtn').addEventListener('click',approve);
-$('refreshBtn').addEventListener('click',refresh);$('moreRefresh').addEventListener('click',refresh);$('homeRoutes').addEventListener('click',()=>document.querySelector('[data-tab=routes]').click());
+$('refreshBtn').addEventListener('click',refresh);$('moreRefresh').addEventListener('click',refresh);$('homeSync').addEventListener('click',refresh);$('historySync').addEventListener('click',refresh);$('financeSync').addEventListener('click',refresh);$('homeRoutes').addEventListener('click',()=>document.querySelector('[data-tab=routes]').click());
 $('locBtn').addEventListener('click',async()=>{try{const coords=await locate();await sendGps(coords)}catch(e){notice(errorMessage(e))}});
 $('gpsToggle').addEventListener('click',()=>{if(gpsWatch===null)startGps();else stopGps()});
 $('locStopBtn').addEventListener('click',stopGps);

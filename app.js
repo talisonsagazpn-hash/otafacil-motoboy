@@ -100,10 +100,10 @@ function currentStatus(p){const s=statuses.get(p.pedido_id);return s?.status||p.
 function currentResult(p){return statuses.get(p.pedido_id)?.resultado||''}
 function render(){
  const active=routes.filter(p=>['em_rota','pendente'].includes(currentStatus(p)));
- $('metricRoutes').textContent=String(active.length);
+ $('metricRoutes').textContent=String(active.length);$('homeActive').textContent=String(active.length);
  const dashboardRecords=finance.length?finance:history;
  $('metricTrips').textContent=String(dashboardRecords.length);
- $('metricMoney').textContent=money(dashboardRecords.reduce((v,r)=>v+(Number(r.valor??r.remuneracao)||0),0));
+ $('metricMoney').textContent=money(dashboardRecords.reduce((v,r)=>v+(Number(r.valor??r.remuneracao)||0),0));const normalized=dashboardRecords.map(r=>String(r.resultado||r.tipo||r.status||'').toLowerCase());$('homeDelivered').textContent=String(normalized.filter(x=>x.includes('entreg')).length);$('homeCancelled').textContent=String(normalized.filter(x=>x.includes('cancel')).length);$('moreDriver').textContent=state.driverName||'Motoboy';
  $('routeList').innerHTML=active.length?active.map((p,i)=>{
  const pay=payments.get(p.pedido_id)||{},payment=pay.pagamento_status==='cobrar'?`Cobrar do cliente • ${esc(pay.pagamento_forma||'')} ${pay.pagamento_valor!=null?money(pay.pagamento_valor):''}`:pay.pagamento_status==='pago'?'Pagamento online realizado':'';
  return `<article class="card"><div class="route-title"><h3>${i+1}. Pedido #${esc(p.numero||'—')}</h3><span class="badge">Em rota</span></div>
@@ -112,7 +112,7 @@ function render(){
  ${p.referencia?`<p>Referência: ${esc(p.referencia)}</p>`:''}
  ${payment?`<p class="muted">${payment}</p>`:''}
  <p class="value">Corrida: ${money(p.taxa_motoboy??10)}</p>
- <div class="actions"><button class="secondary" data-action="map" data-id="${esc(p.pedido_id)}">Navegar</button>
+ <div class="actions"><button class="secondary" data-action="map" data-id="${esc(p.pedido_id)}">Iniciar navegação</button>
  <button class="secondary" data-action="arrive" data-id="${esc(p.pedido_id)}">Cheguei</button>
  <button data-action="deliver" data-id="${esc(p.pedido_id)}">Finalizar entrega</button>
  <button class="secondary" data-action="cancel" data-id="${esc(p.pedido_id)}">Cancelar</button></div></article>`
@@ -125,10 +125,13 @@ function render(){
  const f=finance.length?finance:history;
  const total=f.reduce((s,r)=>s+(Number(r.valor??r.remuneracao)||0),0);
  $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Não é fechamento de ciclo. O valor mostrado depende do período e dos registros retornados pela RPC.</p></div>`;
- const groups=[{label:'Entregues',count:0},{label:'Canceladas pagas',count:0},{label:'Outras',count:0}];
- f.forEach(r=>{const t=String(r.resultado||r.tipo||r.status||'').toLowerCase();if(t.includes('entreg'))groups[0].count++;else if(t.includes('cancel')&&(t.includes('pago')||t.includes('remuner')))groups[1].count++;else groups[2].count++});
- const max=Math.max(1,...groups.map(x=>x.count));
- $('financeChart').innerHTML=groups.map(g=>`<div class="chart-col"><strong>${g.count}</strong><div class="chart-bar" style="height:${Math.max(4,Math.round(g.count/max*112))}px"></div><small>${g.label}</small></div>`).join('');
+ const weekStart=new Date();weekStart.setHours(0,0,0,0);weekStart.setDate(weekStart.getDate()-((weekStart.getDay()+6)%7));
+ const days=Array.from({length:7},(_,i)=>({label:['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'][i],amount:0}));
+ let undated=0;
+ f.forEach(r=>{const raw=r.finalizado_em||r.registrado_em||r.data_finalizacao||r.data;const dt=raw?new Date(raw):null;if(!dt||Number.isNaN(dt.getTime())){undated++;return}const day=new Date(dt);day.setHours(0,0,0,0);const index=Math.round((day-weekStart)/86400000);if(index>=0&&index<7)days[index].amount+=Number(r.valor??r.remuneracao)||0});
+ const max=Math.max(1,...days.map(x=>x.amount));
+ $('financeChart').innerHTML=days.map(g=>`<div class="chart-col"><strong>${money(g.amount)}</strong><div class="chart-bar" style="height:${Math.max(4,Math.round(g.amount/max*125))}px"></div><small>${g.label}</small></div>`).join('');
+ $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Gráfico: semana atual (segunda a domingo), pela data de finalização disponível. ${undated?undated+' registro(s) sem data não aparecem no gráfico.':''} Não representa necessariamente o fechamento do ciclo.</p></div>`;
  $('financeList').innerHTML=f.slice(0,100).map(r=>`<article class="card"><strong>${esc(r.pedido_numero||r.numero||'Corrida')}</strong> • ${esc(r.tipo||r.resultado||'')} <span class="value">${money(r.valor??r.remuneracao??0)}</span></article>`).join('');
 }
 function findOrder(id){return routes.find(p=>p.pedido_id===id)}
@@ -143,7 +146,14 @@ async function verifyDistance(p){
 }
 async function action(id,kind){
  const p=findOrder(id);if(!p)return;
- if(kind==='map'){const q=p.latitude&&p.longitude?`${p.latitude},${p.longitude}`:p.endereco||'';window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q),'_blank','noopener');return}
+ if(kind==='map'){
+ const q=p.latitude&&p.longitude?`${p.latitude},${p.longitude}`:p.endereco||'';
+ if(!q){notice('Endereço não disponível para navegação.');return}
+ const maps='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(q);
+ const waze='https://waze.com/ul?'+(p.latitude&&p.longitude?'ll='+encodeURIComponent(`${p.latitude},${p.longitude}`):'q='+encodeURIComponent(q))+'&navigate=yes';
+ const choice=window.prompt('Escolha o navegador: 1 - Google Maps | 2 - Waze','1');
+ if(choice==='1'||choice==='2')window.open(choice==='1'?maps:waze,'_blank','noopener');return
+ }
  if(kind==='arrive'){try{await locate();notice('Chegada registrada apenas nesta tela. A integração de chegada com o banco precisa ser confirmada.')}catch(e){notice(errorMessage(e))}return}
  if(!['deliver','cancel'].includes(kind))return;
  const msg=kind==='deliver'?'Confirmar que este pedido foi entregue?':'Cancelar este pedido sem remuneração? Cancelamento remunerado deve ser realizado pelo estabelecimento.';
@@ -194,7 +204,7 @@ function stopGps(){
 function startRefresh(){if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden)refresh()},Math.max(10,cfg.refreshSeconds)*1000)}
 $('loginForm').addEventListener('submit',login);
 $('approveBtn').addEventListener('click',approve);
-$('refreshBtn').addEventListener('click',refresh);
+$('refreshBtn').addEventListener('click',refresh);$('moreRefresh').addEventListener('click',refresh);$('homeRoutes').addEventListener('click',()=>document.querySelector('[data-tab=routes]').click());
 $('locBtn').addEventListener('click',async()=>{try{const coords=await locate();await sendGps(coords)}catch(e){notice(errorMessage(e))}});
 $('gpsToggle').addEventListener('click',()=>{if(gpsWatch===null)startGps();else stopGps()});
 $('locStopBtn').addEventListener('click',stopGps);

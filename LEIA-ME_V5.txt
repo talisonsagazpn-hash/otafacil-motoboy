@@ -1,0 +1,9 @@
+Rota Fácil Web V5 — layout de homologação
+
+Substitua index.html, app.js e styles.css no repositório web do motoboy. Preserve config.js.
+
+Novidades: abas Início, Rotas, Histórico, Financeiro, Mais; gráfico por dia da semana com valor em reais; escolha Maps/Waze via link externo.
+
+Limitações: o gráfico depende das datas e valores realmente retornados pelas RPCs. Cheguei continua local, não sincronizado. Copiar código/localizador e abertura do site de confirmação ainda exigem mapeamento seguro dos campos do despacho. Não habilite em produção sem testar. iPhone não garante GPS em segundo plano.
+
+Nenhum SQL ou aplicativo Android foi modificado.

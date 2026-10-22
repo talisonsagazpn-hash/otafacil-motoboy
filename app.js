@@ -5,7 +5,7 @@ const cfg=window.ROTA_CONFIG;
 const $=id=>document.getElementById(id);
 const storeKey='rotafacil_web_iphone_v1';
 let state={device:'',proof:'',pendingId:'',session:'',operational:'',driver:'',company:''};
-let routes=[],statuses=new Map(),payments=new Map(),history=[],finance=[],lastPosition=null,loading=false,refreshTimer=null;
+let gpsWatch=null,gpsTimer=null,gpsLastSent=0,gpsSending=false,gpsLastFix=null,gpsOnline=false;let routes=[],statuses=new Map(),payments=new Map(),history=[],finance=[],lastPosition=null,loading=false,refreshTimer=null;
 try{state={...state,...JSON.parse(localStorage.getItem(storeKey)||'{}')}}catch{}
 const save=()=>localStorage.setItem(storeKey,JSON.stringify(state));
 function randomHex(){const a=crypto.getRandomValues(new Uint8Array(32));return [...a].map(x=>x.toString(16).padStart(2,'0')).join('')}
@@ -25,7 +25,7 @@ async function request(path,body,edge=false){
 const edge=(name,body)=>request(name,body,true);
 const rpc=(name,body)=>request(name,body);
 function setConnection(text){$('connection').textContent=text}
-function showApp(){ $('auth').classList.add('hidden');$('app').classList.remove('hidden');$('driverName').textContent=state.driverName||'Motoboy';startRefresh()}
+function showApp(){ $('auth').classList.add('hidden');$('app').classList.remove('hidden');$('driverName').textContent=state.driverName||'Motoboy';$('welcome').textContent='Bem-vindo, '+(state.driverName||'motoboy')+' • suas rotas e resultados';startRefresh()}
 function showLogin(){ $('auth').classList.remove('hidden');$('app').classList.add('hidden');$('pendingBox').classList.toggle('hidden',!state.pendingId);if(state.pendingId)$('pendingText').textContent='Aguardando aprovação da loja. Após aprovar, toque em Consultar aprovação.'}
 async function login(ev){
  ev.preventDefault();const user=$('username').value.trim().toLowerCase(),pass=$('password').value;
@@ -45,7 +45,7 @@ async function approve(){
   if(!state.pendingId||!state.proof)throw Error('Solicite autorização primeiro');
   const r=await edge('rota-login-motoboy',{acao:'ativar_acesso',solicitacao_id:state.pendingId,comprovante:state.proof});
   if(r.status!=='ativo'){notice('Situação: '+(r.status||'aguardando'));return}
-  state.session=r.token_sessao;state.driver=r.motoboy_id;state.company=r.empresa_id;state.pendingId='';state.proof='';save();
+  state.session=r.token_sessao;state.driver=r.motoboy_id;state.company=r.empresa_id;state.driverName=r.nome||'Motoboy';state.pendingId='';state.proof='';save();
   await enableOperations();showApp();await refresh();
  }catch(e){notice('Não foi possível concluir: '+errorMessage(e))}finally{$('approveBtn').disabled=false}
 }
@@ -102,6 +102,10 @@ function currentStatus(p){const s=statuses.get(p.pedido_id);return s?.status||p.
 function currentResult(p){return statuses.get(p.pedido_id)?.resultado||''}
 function render(){
  const active=routes.filter(p=>['em_rota','pendente'].includes(currentStatus(p)));
+ $('metricRoutes').textContent=String(active.length);
+ const dashboardRecords=finance.length?finance:history;
+ $('metricTrips').textContent=String(dashboardRecords.length);
+ $('metricMoney').textContent=money(dashboardRecords.reduce((v,r)=>v+(Number(r.valor??r.remuneracao)||0),0));
  $('routeList').innerHTML=active.length?active.map((p,i)=>{
  const pay=payments.get(p.pedido_id)||{},payment=pay.pagamento_status==='cobrar'?`Cobrar do cliente • ${esc(pay.pagamento_forma||'')} ${pay.pagamento_valor!=null?money(pay.pagamento_valor):''}`:pay.pagamento_status==='pago'?'Pagamento online realizado':'';
  return `<article class="card"><div class="route-title"><h3>${i+1}. Pedido #${esc(p.numero||'—')}</h3><span class="badge">Em rota</span></div>
@@ -123,6 +127,10 @@ function render(){
  const f=finance.length?finance:history;
  const total=f.reduce((s,r)=>s+(Number(r.valor??r.remuneracao)||0),0);
  $('financeSummary').innerHTML=`<div class="summary"><small>Total dos ${f.length} registros retornados pelo Supabase</small><strong>${money(total)}</strong><p class="hint">Não é fechamento de ciclo. O valor mostrado depende do período e dos registros retornados pela RPC.</p></div>`;
+ const groups=[{label:'Entregues',count:0},{label:'Canceladas pagas',count:0},{label:'Outras',count:0}];
+ f.forEach(r=>{const t=String(r.resultado||r.tipo||r.status||'').toLowerCase();if(t.includes('entreg'))groups[0].count++;else if(t.includes('cancel')&&(t.includes('pago')||t.includes('remuner')))groups[1].count++;else groups[2].count++});
+ const max=Math.max(1,...groups.map(x=>x.count));
+ $('financeChart').innerHTML=groups.map(g=>`<div class="chart-col"><strong>${g.count}</strong><div class="chart-bar" style="height:${Math.max(4,Math.round(g.count/max*112))}px"></div><small>${g.label}</small></div>`).join('');
  $('financeList').innerHTML=f.slice(0,100).map(r=>`<article class="card"><strong>${esc(r.pedido_numero||r.numero||'Corrida')}</strong> • ${esc(r.tipo||r.resultado||'')} <span class="value">${money(r.valor??r.remuneracao??0)}</span></article>`).join('');
 }
 function findOrder(id){return routes.find(p=>p.pedido_id===id)}
@@ -152,13 +160,48 @@ async function action(id,kind){
  }catch(e){notice('Não finalizado: '+errorMessage(e))}
  finally{if(btn)btn.disabled=false}
 }
+function presence(on,details){
+ gpsOnline=on;
+ const e=$('onlineIndicator');e.classList.toggle('online',on);e.classList.toggle('offline',!on);e.innerHTML=`<span class="dot"></span> ${on?'Online':'Offline'}`;
+ $('gpsMini').textContent=details||(on?'Localização enviada ao painel':'GPS não sincronizado');
+ $('gpsToggle').textContent=on?'GPS ativo':'Ativar GPS';
+}
+async function sendGps(coords){
+ if(!state.operational||gpsSending||document.hidden||Date.now()-gpsLastSent<12000)return;
+ gpsSending=true;
+ try{
+  const result=await rpc('rota_localizar_aparelho',{p_dispositivo:state.operational,p_latitude:coords.latitude,p_longitude:coords.longitude,p_compartilhando:true});
+  if(result.ok===false)throw Error(result.erro||'GPS recusado pelo Supabase');
+  gpsLastSent=Date.now();presence(true,`Enviado às ${new Date().toLocaleTimeString('pt-BR')} • precisão ${Math.round(coords.accuracy)} m`);
+ }catch(e){presence(false,'Falha ao sincronizar GPS: '+errorMessage(e))}
+ finally{gpsSending=false}
+}
+function startGps(){
+ if(!state.operational){notice('Faça login e autorize as operações antes de ativar o GPS.');return}
+ if(!navigator.geolocation){notice('GPS não disponível neste navegador.');return}
+ if(gpsWatch!==null)return;
+ gpsWatch=navigator.geolocation.watchPosition(pos=>{
+  gpsLastFix=pos.coords;
+  $('locText').textContent=`Precisão aproximada: ${Math.round(pos.coords.accuracy)} m • ${new Date().toLocaleTimeString('pt-BR')}`;
+  sendGps(pos.coords);
+ },err=>{presence(false,'GPS: '+err.message);notice('GPS: '+err.message)}, {enableHighAccuracy:true,maximumAge:10000,timeout:20000});
+ gpsTimer=setInterval(()=>{if(!document.hidden&&gpsLastFix)sendGps(gpsLastFix)},15000);
+ $('gpsMini').textContent='Aguardando GPS e confirmação do servidor...';
+}
+function stopGps(){
+ if(gpsWatch!==null)navigator.geolocation.clearWatch(gpsWatch);
+ gpsWatch=null;clearInterval(gpsTimer);gpsTimer=null;gpsLastFix=null;
+ presence(false,'GPS pausado neste navegador; status do painel pode demorar a expirar');
+}
 function startRefresh(){if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden)refresh()},Math.max(10,cfg.refreshSeconds)*1000)}
 $('loginForm').addEventListener('submit',login);
 $('approveBtn').addEventListener('click',approve);
 $('refreshBtn').addEventListener('click',refresh);
-$('locBtn').addEventListener('click',async()=>{try{await locate()}catch(e){notice(errorMessage(e))}});
-$('logoutBtn').addEventListener('click',()=>{if(!confirm('Sair deste iPhone? Será necessário solicitar autorização novamente.'))return;localStorage.removeItem(storeKey);location.reload()});
+$('locBtn').addEventListener('click',async()=>{try{const coords=await locate();await sendGps(coords)}catch(e){notice(errorMessage(e))}});
+$('gpsToggle').addEventListener('click',()=>{if(gpsWatch===null)startGps();else stopGps()});
+$('locStopBtn').addEventListener('click',stopGps);
+$('logoutBtn').addEventListener('click',()=>{if(!confirm('Sair deste iPhone? Será necessário solicitar autorização novamente.'))return;stopGps();localStorage.removeItem(storeKey);location.reload()});
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.view').forEach(v=>v.classList.toggle('hidden',v.id!==b.dataset.tab))}));
 $('routeList').addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(b)action(b.dataset.id,b.dataset.action)});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.session)refresh()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.session){refresh();if(gpsLastFix)sendGps(gpsLastFix)}else if(document.hidden)presence(false,'Em segundo plano: envio de GPS não garantido')});
 resume();

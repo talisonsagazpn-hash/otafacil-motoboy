@@ -46,7 +46,7 @@ async function approve(){
   const r=await edge('rota-login-motoboy',{acao:'ativar_acesso',solicitacao_id:state.pendingId,comprovante:state.proof});
   if(r.status!=='ativo'){notice('Situação: '+(r.status||'aguardando'));return}
   state.session=r.token_sessao;state.driver=r.motoboy_id;state.company=r.empresa_id;state.driverName=r.nome||'Motoboy';state.pendingId='';state.proof='';save();
-  await enableOperations();showApp();await refresh();
+  await enableOperations();showApp();startGps();await refresh();
  }catch(e){notice('Não foi possível concluir: '+errorMessage(e))}finally{$('approveBtn').disabled=false}
 }
 async function validateSession(){
@@ -65,7 +65,7 @@ async function enableOperations(){
 async function resume(){
  if(!state.session){showLogin();return}
  setConnection('Validando...');
- try{await validateSession();if(!state.operational)await enableOperations();showApp();await refresh()}
+ try{await validateSession();await enableOperations();showApp();startGps();await refresh()}
  catch(e){showLogin();setConnection('Acesso pendente');notice('Sessão: '+errorMessage(e))}
 }
 async function refresh(){
@@ -94,7 +94,7 @@ async function refresh(){
   if(result[3].status==='fulfilled'){history=result[3].value.corridas||[];ok++}
   if(result[4].status==='fulfilled'){const d=result[4].value;finance=Array.isArray(d.corridas)?d.corridas:Array.isArray(d.registros)?d.registros:[];ok++}
   if(!ok)throw Error(result[0].reason?.message||'Não foi possível consultar o Supabase');
-  render();setConnection(ok===5?'Sincronizado':'Parcial');$('routeStatus').textContent=`Última consulta: ${new Date().toLocaleTimeString('pt-BR')} • ${ok}/5 fontes`;
+  render();setConnection(ok===5?'Sincronizado':'Parcial');$('routeStatus').textContent=`Última consulta: ${new Date().toLocaleTimeString('pt-BR')} • ${ok}/5 fontes`;if(ok<5){const names=['Despachos','Status','Pagamentos','Histórico','Financeiro'];const errs=result.map((r,i)=>r.status==='rejected'?`${names[i]}: ${errorMessage(r.reason)}`:null).filter(Boolean);$('syncErrors').textContent=errs.join(' | ')}else $('syncErrors').textContent='';
  }catch(e){setConnection('Sem conexão');$('routeStatus').textContent='Não foi possível atualizar. Os dados anteriores permanecem na tela.';notice(errorMessage(e))}
  finally{loading=false}
 }

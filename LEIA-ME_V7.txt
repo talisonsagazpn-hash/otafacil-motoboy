@@ -1,7 +1,0 @@
-Rota Fácil FUNCIONÁRIO Web V7 - interface inspirada nas telas do Android.
-Histórico somente leitura: sem editar, mover, remover ou retorno.
-Financeiro: períodos hoje/semana/mês; registros sem data não entram no gráfico.
-Não modifica banco, painel nem app Android.
-Atenção: dados de cliente/número só podem aparecer se retornados pelas RPCs.
-Teste no GitHub Pages substituindo index.html, app.js e styles.css.
-Confirme sincronização e recebimento de rota antes de usar em produção.

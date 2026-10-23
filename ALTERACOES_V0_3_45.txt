@@ -1,0 +1,1 @@
+Cadastro novo por nome, usuario e senha; botoes antigos de codigo ocultos; redefinicao existente mantida; usuarios atuais nao modificados. Execute SQL antes de publicar. Android precisa ser compatível com login novo.

@@ -1,0 +1,10 @@
+Rota Facil Painel V0.3.38 - Cadastro de atualizacoes
+
+1. Execute Notas/SQL_ATUALIZACOES.sql no Supabase SQL Editor.
+2. Troque SEU_EMAIL_AQUI no SQL pelo email da conta administradora.
+3. Publique os arquivos do ZIP no site do painel.
+4. Entre com a conta administradora e abra Atualizacoes.
+5. Envie APK assinado com mesmo packageName/chave e versionCode crescente.
+
+IMPORTANTE: Esta entrega implementa o envio/publicacao pelo painel. A deteccao e instalacao no Android AINDA precisam ser integradas nos dois aplicativos.
+O acesso de download pelos aplicativos requer endpoint autenticado separado; nunca exponha o bucket privado publicamente.

@@ -1,0 +1,2 @@
+Correção no app.js: tratamento de erro e validação do status no Supabase.
+ATENÇÃO: base local anterior à versão atual do GitHub. NÃO publique este ZIP sobre a versão atual, pois perderia mudanças posteriores. O funcionamento depende das funções SQL rota_confirmar_entrega_painel e rota_gerenciar_pedido.

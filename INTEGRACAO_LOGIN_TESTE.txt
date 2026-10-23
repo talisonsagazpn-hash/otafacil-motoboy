@@ -1,0 +1,4 @@
+VERSAO DE TESTE PARCIAL.
+Botao aprovar chama rota_decidir_solicitacao_acesso.
+A funcao SQL de decisao ainda precisa conferir prazo de expiracao; testar somente com conta de teste.
+Nao publicar em producao antes da validacao completa de sessoes e permissao.

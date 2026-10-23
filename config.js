@@ -1,6 +1,3 @@
-window.ROTA_CONFIG = Object.freeze({
-  supabaseUrl: "https://hnyjieuqxpzegfqfotvz.supabase.co",
-  publishableKey: "sb_publishable_Ad5AnGSvI78S3WzNYDLtrw_jSrJJmi_",
-  refreshSeconds: 15,
-  maxDeliveryDistanceMeters: 300
-});
+// Chave PUBLICÁVEL do Supabase. Nunca coloque service_role/secret aqui.
+export const SUPABASE_URL = 'https://hnyjieuqxpzegfqfotvz.supabase.co';
+export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Ad5AnGSvI78S3WzNYDLtrw_jSrJJmi_';

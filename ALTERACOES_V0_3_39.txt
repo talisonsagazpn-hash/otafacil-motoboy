@@ -1,0 +1,5 @@
+Painel V0.3.39 sobre V0.3.38.
+Financeiro: botao Remover corrida somente para proprietario, confirmacao e motivo obrigatorio.
+Exclusao logica auditavel por empresa/motoboy; painel ignora registros removidos, inclusive complemento financeiro por pedido.
+EXECUTAR primeiro SQL_REMOVER_CORRIDA_V0_3_39.sql no Supabase.
+ATENCAO: apps Android V2.9.6.37 nao foram alterados neste pacote; a leitura financeira RPC antiga pode nao aplicar o filtro de exclusao. Ajustar RPC antes de afirmar sincronizacao total.

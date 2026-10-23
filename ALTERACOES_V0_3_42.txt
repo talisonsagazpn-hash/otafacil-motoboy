@@ -1,0 +1,7 @@
+V0.3.42 — Integração administrativa de acesso (PARCIAL)
+Base: V0.3.41, derivada da V0.3.39.
+- Proprietário e gerente podem autorizar redefinição de senha (permissão conferida novamente pelo RPC).
+- Verificação explícita de retorno ok da decisão de solicitação.
+- Aviso reforçado: aprovação ainda não vincula dispositivo.
+- Mantidos pedidos, rotas, financeiro, atualizações e remoção de corrida.
+ATENÇÃO: não publicar como solução final de login; depende da integração Android e autenticação.

@@ -1,5 +1,0 @@
-Base: painel V0.3.39 (a V0.3.40 não foi presumida como aplicada).
-Adicionado: exibição de nome_usuario; listagem de solicitações de acesso; aprovação/rejeição por RPC; autorização de redefinição de senha por RPC.
-Atenção: as RPCs já devem estar criadas no Supabase. Aprovação ainda NÃO vincula aparelho e autorização NÃO troca a senha: exigem conclusão do fluxo seguro de login no backend e Android.
-Os botões antigos de ativação e recuperação permanecem, explicitamente identificados, para não interromper funcionários que usam a versão atual.
-Não substitua APKs por este ZIP: é somente o painel web. Faça backup do painel publicado antes de substituir.

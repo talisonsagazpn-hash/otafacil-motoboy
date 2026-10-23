@@ -1,1 +1,0 @@
-Painel V0.3.44 - Cadastro da nova senha pelo gestor.\nO gestor usa rota_autorizar_redefinicao_senha e rota_concluir_redefinicao_senha.\nA senha antiga nao e revogada. A interface usa prompt temporario; preferir dialogo proprio antes de producao.\nAinda requer teste real de aprovacoes, sessao e integracao completa das entregas.\n

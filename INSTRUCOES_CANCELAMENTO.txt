@@ -1,1 +1,0 @@
-Execute SQL antes de publicar. Este ZIP deriva de base local anterior ao painel atual GitHub e NAO deve substituir a versao de producao. Mescle somente as alteracoes do app.js na versao atual.
